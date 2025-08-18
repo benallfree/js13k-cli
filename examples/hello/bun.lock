@@ -1,0 +1,13 @@
+{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "devDependencies": {
+        "vanjs-core": "^1.5.5",
+      },
+    },
+  },
+  "packages": {
+    "vanjs-core": ["vanjs-core@1.5.5", "", {}, "sha512-BC9MjbXYIRqnwncXfacT6upJpVmIKyrV2MjZi8NuCK+yc9RP0hfdghTpmEuYswXOfkLarDPPcYK4X6q68T9e+g=="],
+  }
+}

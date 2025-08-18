@@ -1,0 +1,56 @@
+{
+  "name": "js13k",
+  "version": "0.0.1",
+  "description": "A CLI for the js13kGames competition",
+  "author": "js13kGames",
+  "license": "MIT",
+  "homepage": "https://js13kgames.com/",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/benallfree/js13k"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "build:watch": "tsdown --watch",
+    "dev": "nodemon dist/index.js"
+  },
+  "module": "dist/index.js",
+  "bin": {
+    "js13k": "dist/index.js"
+  },
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/express": "^5.0.3",
+    "@types/ws": "^8.18.1",
+    "nodemon": "^3.1.10",
+    "prettier": "^3.6.2",
+    "prettier-plugin-organize-imports": "^4.2.0",
+    "tsdown": "^0.14.1",
+    "typescript": "^5.9.2"
+  },
+  "dependencies": {
+    "commander": "^14.0.0",
+    "express": "^5.1.0",
+    "hono": "^4.9.2",
+    "js13k-vite-plugins": "^0.4.0",
+    "partykit": "^0.0.115",
+    "vite": "^7.1.2",
+    "ws": "^8.18.3"
+  },
+  "trustedDependencies": [
+    "advzip-bin",
+    "ect-bin"
+  ],
+  "prettier": {
+    "plugins": [
+      "prettier-plugin-organize-imports"
+    ],
+    "singleQuote": true,
+    "trailingComma": "es5",
+    "arrowParens": "always",
+    "semi": false,
+    "printWidth": 120
+  }
+}
