@@ -25,6 +25,49 @@ ctx.imageSmoothingEnabled = false
 let isDrawing = false
 let ws: WebSocket | null = null
 
+// --- Cursor preview overlay ---
+const overlayCanvas = document.createElement('canvas')
+const overlayCtx = overlayCanvas.getContext('2d')!
+overlayCtx.imageSmoothingEnabled = false
+overlayCanvas.style.position = 'absolute'
+overlayCanvas.style.pointerEvents = 'none'
+overlayCanvas.style.zIndex = '10'
+document.body.appendChild(overlayCanvas)
+
+function positionOverlayCanvas() {
+  const rect = canvas.getBoundingClientRect()
+  overlayCanvas.width = canvas.width
+  overlayCanvas.height = canvas.height
+  overlayCanvas.style.width = `${rect.width}px`
+  overlayCanvas.style.height = `${rect.height}px`
+  overlayCanvas.style.left = `${rect.left + window.scrollX}px`
+  overlayCanvas.style.top = `${rect.top + window.scrollY}px`
+}
+
+positionOverlayCanvas()
+window.addEventListener('resize', positionOverlayCanvas)
+window.addEventListener('scroll', positionOverlayCanvas, { passive: true })
+
+let lastMousePos: { x: number; y: number } | null = null
+
+function clearCursorPreview() {
+  overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height)
+}
+
+function renderCursorPreview(x: number, y: number) {
+  clearCursorPreview()
+  overlayCtx.beginPath()
+  overlayCtx.arc(x + 0.5, y + 0.5, markRadius, 0, Math.PI * 2)
+  overlayCtx.strokeStyle = colorPicker.value
+  overlayCtx.lineWidth = 1
+  overlayCtx.globalAlpha = 1
+  overlayCtx.stroke()
+  overlayCtx.globalAlpha = 0.12
+  overlayCtx.fillStyle = colorPicker.value
+  overlayCtx.fill()
+  overlayCtx.globalAlpha = 1
+}
+
 // --- Sync state ---
 const clientId = Array.from(crypto.getRandomValues(new Uint32Array(2)))
   .map((n) => n.toString(16).padStart(8, '0'))
@@ -43,6 +86,7 @@ if (radiusValue) radiusValue.textContent = String(markRadius)
 radiusSlider?.addEventListener('input', () => {
   markRadius = Number(radiusSlider.value)
   if (radiusValue) radiusValue.textContent = String(markRadius)
+  if (lastMousePos) renderCursorPreview(lastMousePos.x, lastMousePos.y)
 })
 
 // Get mouse position relative to canvas
@@ -256,8 +300,10 @@ canvas.addEventListener('mousedown', (e) => {
 })
 
 canvas.addEventListener('mousemove', (e) => {
+  const pos = getMousePos(e)
+  lastMousePos = pos
+  renderCursorPreview(pos.x, pos.y)
   if (isDrawing) {
-    const pos = getMousePos(e)
     const color = colorPicker.value
     drawPixel(pos.x, pos.y, color, markRadius)
     sendPixel(pos.x, pos.y, color, markRadius)
@@ -271,6 +317,8 @@ canvas.addEventListener('mouseup', () => {
 
 canvas.addEventListener('mouseleave', () => {
   isDrawing = false
+  lastMousePos = null
+  clearCursorPreview()
 })
 
 // WebSocket connection
