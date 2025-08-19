@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+All the games in examples/ are for the js13k "mmo" challenge. In the MMO challege, they connect via socket to an official relay server. All it does is relay and broadcast messages to clients. It performs no logic. That means the clients have to work coopoeratively to decide how to transmit game state data and other types of data.
