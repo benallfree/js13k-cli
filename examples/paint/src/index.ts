@@ -24,6 +24,16 @@ ctx.imageSmoothingEnabled = false
 let isDrawing = false
 let ws: WebSocket | null = null
 
+// --- Sync state ---
+const clientId = Array.from(crypto.getRandomValues(new Uint32Array(2)))
+  .map((n) => n.toString(16).padStart(8, '0'))
+  .join('')
+let isSyncing = false
+const queuedDeltas: string[] = []
+const pendingSnapshotTimers = new Map<string, number>() // reqId -> timer id
+let requestedReqId: string | null = null
+let syncFallbackTimer: number | null = null
+
 // Visual size of a painted mark (radius in pixels)
 let markRadius = Number(radiusSlider?.value ?? 5)
 if (radiusValue) radiusValue.textContent = String(markRadius)
@@ -54,7 +64,7 @@ function sendPixel(x: number, y: number, color: string, radius: number = markRad
   if (ws && ws.readyState === WebSocket.OPEN) {
     // Remove # from hex color for compactness
     const compactColor = color.startsWith('#') ? color.slice(1) : color
-    ws.send(`${x}|${y}|${radius}|${compactColor}`)
+    ws.send(`P|${x}|${y}|${radius}|${compactColor}`)
   }
 }
 
@@ -70,6 +80,111 @@ function handleIncomingPixel(data: string) {
   if (!isNaN(x) && !isNaN(y) && x >= 0 && x < canvas.width && y >= 0 && y < canvas.height) {
     drawPixel(x, y, color, radius)
   }
+}
+
+// Deterministic selection: compute a delay based on request id and our client id
+function computeDeterministicDelay(reqId: string, responderClientId: string) {
+  const a = simpleHash32(reqId)
+  const b = simpleHash32(responderClientId)
+  const score = (a ^ b) >>> 0
+  const MIN = 30
+  const WINDOW = 220
+  return MIN + (score % WINDOW)
+}
+
+function simpleHash32(s: string) {
+  let h = 2166136261 >>> 0
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i)
+    h = Math.imul(h, 16777619) >>> 0
+  }
+  return h >>> 0
+}
+
+function applySnapshot(dataUrl: string, onDone: () => void) {
+  const img = new Image()
+  img.onload = () => {
+    ctx.clearRect(0, 0, canvas.width, canvas.height)
+    ctx.drawImage(img, 0, 0)
+    onDone()
+  }
+  img.src = dataUrl
+}
+
+function maybeRespondToSnapshot(reqId: string, requesterId: string) {
+  if (requesterId === clientId) return
+  const delay = computeDeterministicDelay(reqId, clientId)
+  const timer = setTimeout(() => {
+    // If an S for this reqId already happened, we will have cleared this timer
+    if (!pendingSnapshotTimers.has(reqId)) return
+    const dataUrl = canvas.toDataURL('image/webp', 0.8)
+    const parts = dataUrl.split(',', 2)
+    const header = parts[0] || 'data:image/webp;base64'
+    const b64 = parts[1] || ''
+    ws?.send(`S|${reqId}|${clientId}|${header}|${b64}`)
+  }, delay) as unknown as number
+  pendingSnapshotTimers.set(reqId, timer)
+}
+
+function handleMessage(message: string) {
+  // New framed protocol: TYPE|...
+  if (message.length >= 2 && message[1] === '|') {
+    const type = message[0]
+    const rest = message.slice(2)
+
+    if (type === 'P') {
+      if (isSyncing) {
+        queuedDeltas.push(message)
+        return
+      }
+      // rest is x|y|r|color
+      handleIncomingPixel(rest)
+      return
+    }
+
+    if (type === 'R') {
+      const [reqId, requesterId] = rest.split('|', 3)
+      if (reqId && requesterId) maybeRespondToSnapshot(reqId, requesterId)
+      return
+    }
+
+    if (type === 'S') {
+      const [reqId, fromId, header, b64] = rest.split('|', 4)
+      // Cancel any local response timers for this reqId on ALL peers
+      const t = pendingSnapshotTimers.get(reqId)
+      if (t) {
+        clearTimeout(t)
+        pendingSnapshotTimers.delete(reqId)
+      }
+      // If we are the requester for this snapshot, apply it
+      if (requestedReqId && reqId === requestedReqId) {
+        // Stop solo-session fallback
+        if (syncFallbackTimer !== null) {
+          clearTimeout(syncFallbackTimer)
+          syncFallbackTimer = null
+        }
+        applySnapshot(`${header},${b64}`, () => {
+          isSyncing = false
+          // Replay queued deltas now that we have base image
+          for (const queued of queuedDeltas) handleMessage(queued)
+          queuedDeltas.length = 0
+        })
+      }
+      return
+    }
+
+    if (type === 'H') {
+      // Presence message – not used right now
+      return
+    }
+  }
+
+  // Back-compat: legacy paint messages without prefix
+  if (isSyncing) {
+    queuedDeltas.push(`P|${message}`)
+    return
+  }
+  handleIncomingPixel(message)
 }
 
 // Mouse event handlers
@@ -105,10 +220,30 @@ safeWebSocket('ws://localhost:4321/parties/relay/paint', (websocket) => {
   ws.addEventListener('open', () => {
     connectionStatus.textContent = 'Connected'
     connectionStatus.style.color = '#4CAF50'
+
+    // Begin sync process: request snapshot and buffer deltas
+    isSyncing = true
+    requestedReqId = Array.from(crypto.getRandomValues(new Uint32Array(2)))
+      .map((n) => n.toString(16).padStart(8, '0'))
+      .join('')
+
+    // Optional presence broadcast
+    ws?.send(`H|${clientId}`)
+    // Snapshot request: R|reqId|requesterId|w|h
+    ws?.send(`R|${requestedReqId}|${clientId}|${canvas.width}|${canvas.height}`)
+
+    // If we are alone in the room, stop syncing after a short delay
+    syncFallbackTimer = setTimeout(() => {
+      if (!isSyncing) return
+      isSyncing = false
+      // Replay any queued deltas (likely none if we were alone)
+      for (const queued of queuedDeltas) handleMessage(queued)
+      queuedDeltas.length = 0
+    }, 400) as unknown as number
   })
 
   ws.addEventListener('message', (e) => {
-    handleIncomingPixel(e.data)
+    handleMessage(e.data)
   })
 
   ws.addEventListener('close', () => {
