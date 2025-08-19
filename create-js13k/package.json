@@ -7,11 +7,15 @@
   },
   "type": "module",
   "license": "MIT",
-  "author": "js13kGames",
+  "author": {
+    "name": "benallfree",
+    "url": "https://github.com/benallfree"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/benallfree/js13k"
   },
+  "homepage": "https://github.com/benallfree/js13k",
   "files": [
     "bin"
   ],
