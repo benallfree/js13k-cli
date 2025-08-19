@@ -4,11 +4,16 @@
   "description": "A CLI for the js13kGames competition",
   "devDependencies": {
     "@types/bun": "latest",
+    "concurrently": "^9.2.0",
     "prettier": "^3.6.2",
     "prettier-plugin-organize-imports": "^4.2.0"
   },
   "scripts": {
-    "js13k": "cd js13k && bun run js13k"
+    "js13k": "cd js13k && bun run js13k",
+    "dev": "concurrently 'bun:dev:*'",
+    "dev:js13k:watch": "cd js13k && bun run build:watch",
+    "dev:js13k:relay": "cd js13k && bun run js13k relay",
+    "dev:paint": "cd examples/paint && ../../js13k/dist/index.js dev"
   },
   "prettier": {
     "plugins": [
