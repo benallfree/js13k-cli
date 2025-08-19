@@ -1,0 +1,5 @@
+---
+alwaysApply: true
+---
+
+You are not allowed to modify readonly.ts without permission. It must stay as a pure relay server per the rules of the js13k jam.
