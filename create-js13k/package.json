@@ -1,0 +1,25 @@
+{
+  "name": "create-js13k",
+  "version": "0.0.1-rc.1",
+  "description": "Create a new js13k project from examples",
+  "bin": {
+    "create-js13k": "bin/index.js"
+  },
+  "type": "module",
+  "license": "MIT",
+  "author": "js13kGames",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/benallfree/js13k"
+  },
+  "files": [
+    "bin"
+  ],
+  "dependencies": {
+    "inquirer": "^12.9.3",
+    "tiged": "^2.12.7"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
