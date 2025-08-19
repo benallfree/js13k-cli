@@ -13,7 +13,8 @@
     "dev": "concurrently 'bun:dev:*'",
     "dev:js13k:watch": "cd js13k && bun run build:watch",
     "dev:js13k:relay": "cd js13k && bun run js13k relay",
-    "dev:paint": "cd examples/paint && ../../js13k/dist/index.js dev"
+    "dev:paint": "cd examples/paint && ../../js13k/dist/index.js dev",
+    "dev:examples:watch": "bun scripts/watch-examples.ts"
   },
   "prettier": {
     "plugins": [
