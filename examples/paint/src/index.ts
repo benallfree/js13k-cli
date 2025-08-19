@@ -17,6 +17,7 @@ const colorPicker = document.getElementById('colorPicker') as HTMLInputElement
 const connectionStatus = document.getElementById('connectionStatus') as HTMLSpanElement
 const radiusSlider = document.getElementById('radiusSlider') as HTMLInputElement
 const radiusValue = document.getElementById('radiusValue') as HTMLSpanElement
+const syncOverlay = document.getElementById('syncOverlay') as HTMLDivElement | null
 
 // Set up canvas for pixel-perfect drawing
 ctx.imageSmoothingEnabled = false
@@ -33,6 +34,8 @@ const queuedDeltas: string[] = []
 const pendingSnapshotTimers = new Map<string, number>() // reqId -> timer id
 let requestedReqId: string | null = null
 let syncFallbackTimer: number | null = null
+const LOCAL_STORAGE_KEY = 'paint:last-snapshot'
+let saveThrottleTimer: number | null = null
 
 // Visual size of a painted mark (radius in pixels)
 let markRadius = Number(radiusSlider?.value ?? 5)
@@ -79,6 +82,7 @@ function handleIncomingPixel(data: string) {
 
   if (!isNaN(x) && !isNaN(y) && x >= 0 && x < canvas.width && y >= 0 && y < canvas.height) {
     drawPixel(x, y, color, radius)
+    scheduleSave()
   }
 }
 
@@ -101,11 +105,44 @@ function simpleHash32(s: string) {
   return h >>> 0
 }
 
+// Wait until a condition is true or a timeout expires
+function waitUntil(condition: () => boolean, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const start = Date.now()
+    const check = () => {
+      if (condition()) return resolve(true)
+      if (Date.now() - start >= timeoutMs) return resolve(false)
+      setTimeout(check, 20)
+    }
+    check()
+  })
+}
+
+function scheduleSave() {
+  if (saveThrottleTimer) return
+  saveThrottleTimer = setTimeout(() => {
+    saveThrottleTimer = null
+    try {
+      const dataUrl = canvas.toDataURL('image/webp', 0.8)
+      localStorage.setItem(LOCAL_STORAGE_KEY, dataUrl)
+    } catch {}
+  }, 300) as unknown as number
+}
+
+function showSyncingOverlay() {
+  if (syncOverlay) syncOverlay.style.display = 'flex'
+}
+
+function hideSyncingOverlay() {
+  if (syncOverlay) syncOverlay.style.display = 'none'
+}
+
 function applySnapshot(dataUrl: string, onDone: () => void) {
   const img = new Image()
   img.onload = () => {
     ctx.clearRect(0, 0, canvas.width, canvas.height)
     ctx.drawImage(img, 0, 0)
+    scheduleSave()
     onDone()
   }
   img.src = dataUrl
@@ -113,17 +150,36 @@ function applySnapshot(dataUrl: string, onDone: () => void) {
 
 function maybeRespondToSnapshot(reqId: string, requesterId: string) {
   if (requesterId === clientId) return
-  const delay = computeDeterministicDelay(reqId, clientId)
-  const timer = setTimeout(() => {
-    // If an S for this reqId already happened, we will have cleared this timer
+
+  // Register an intent to possibly respond so that if someone else
+  // answers first, our intent gets canceled by the 'S' handler.
+  if (!pendingSnapshotTimers.has(reqId)) pendingSnapshotTimers.set(reqId, -1 as unknown as number)
+
+  const scheduleResponse = () => {
     if (!pendingSnapshotTimers.has(reqId)) return
-    const dataUrl = canvas.toDataURL('image/webp', 0.8)
-    const parts = dataUrl.split(',', 2)
-    const header = parts[0] || 'data:image/webp;base64'
-    const b64 = parts[1] || ''
-    ws?.send(`S|${reqId}|${clientId}|${header}|${b64}`)
-  }, delay) as unknown as number
-  pendingSnapshotTimers.set(reqId, timer)
+    const delay = computeDeterministicDelay(reqId, clientId)
+    const timer = setTimeout(() => {
+      if (!pendingSnapshotTimers.has(reqId)) return
+      const dataUrl = canvas.toDataURL('image/webp', 0.8)
+      const parts = dataUrl.split(',', 2)
+      const header = parts[0] || 'data:image/webp;base64'
+      const b64 = parts[1] || ''
+      ws?.send(`S|${reqId}|${clientId}|${header}|${b64}`)
+    }, delay) as unknown as number
+    pendingSnapshotTimers.set(reqId, timer)
+  }
+
+  // Only answer after we have a base image (isSyncing === false)
+  // or after we have timed out waiting for one.
+  if (!isSyncing) {
+    scheduleResponse()
+    return
+  }
+
+  // Wait up to ~400ms (same as our own sync fallback) before answering.
+  waitUntil(() => !isSyncing, 450).then(() => {
+    scheduleResponse()
+  })
 }
 
 function handleMessage(message: string) {
@@ -165,6 +221,8 @@ function handleMessage(message: string) {
         }
         applySnapshot(`${header},${b64}`, () => {
           isSyncing = false
+          requestedReqId = null
+          hideSyncingOverlay()
           // Replay queued deltas now that we have base image
           for (const queued of queuedDeltas) handleMessage(queued)
           queuedDeltas.length = 0
@@ -194,6 +252,7 @@ canvas.addEventListener('mousedown', (e) => {
   const color = colorPicker.value
   drawPixel(pos.x, pos.y, color, markRadius)
   sendPixel(pos.x, pos.y, color, markRadius)
+  scheduleSave()
 })
 
 canvas.addEventListener('mousemove', (e) => {
@@ -202,6 +261,7 @@ canvas.addEventListener('mousemove', (e) => {
     const color = colorPicker.value
     drawPixel(pos.x, pos.y, color, markRadius)
     sendPixel(pos.x, pos.y, color, markRadius)
+    scheduleSave()
   }
 })
 
@@ -223,6 +283,7 @@ safeWebSocket('ws://localhost:4321/parties/relay/paint', (websocket) => {
 
     // Begin sync process: request snapshot and buffer deltas
     isSyncing = true
+    showSyncingOverlay()
     requestedReqId = Array.from(crypto.getRandomValues(new Uint32Array(2)))
       .map((n) => n.toString(16).padStart(8, '0'))
       .join('')
@@ -235,10 +296,29 @@ safeWebSocket('ws://localhost:4321/parties/relay/paint', (websocket) => {
     // If we are alone in the room, stop syncing after a short delay
     syncFallbackTimer = setTimeout(() => {
       if (!isSyncing) return
-      isSyncing = false
-      // Replay any queued deltas (likely none if we were alone)
-      for (const queued of queuedDeltas) handleMessage(queued)
-      queuedDeltas.length = 0
+      const stored = (() => {
+        try {
+          return localStorage.getItem(LOCAL_STORAGE_KEY)
+        } catch {
+          return null
+        }
+      })()
+      if (stored) {
+        applySnapshot(stored, () => {
+          isSyncing = false
+          requestedReqId = null
+          hideSyncingOverlay()
+          for (const queued of queuedDeltas) handleMessage(queued)
+          queuedDeltas.length = 0
+        })
+      } else {
+        isSyncing = false
+        requestedReqId = null
+        hideSyncingOverlay()
+        // Replay any queued deltas (likely none if we were alone)
+        for (const queued of queuedDeltas) handleMessage(queued)
+        queuedDeltas.length = 0
+      }
     }, 400) as unknown as number
   })
 
