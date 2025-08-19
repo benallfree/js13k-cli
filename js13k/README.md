@@ -43,6 +43,14 @@ npx js13k <command>
   - **PORT**: Set the port via the `PORT` env var (default: `4321`).
   - Clients connect to: `ws://localhost:<PORT>/parties/relay/<room>`
 
+- **create**: Scaffold a new project from the official examples.
+
+  ```bash
+  npx js13k create
+  ```
+
+  Follow the prompts to pick an example and target directory.
+
 ### Help
 
 - Global help: `npx js13k --help`

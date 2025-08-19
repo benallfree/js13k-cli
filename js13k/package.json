@@ -15,7 +15,7 @@
   "scripts": {
     "build": "tsdown",
     "build:watch": "tsdown --watch",
-    "dev": "nodemon dist/index.js"
+    "js13k": "tsx --watch src/index.ts "
   },
   "module": "dist/index.js",
   "bin": {
@@ -33,14 +33,17 @@
     "prettier": "^3.6.2",
     "prettier-plugin-organize-imports": "^4.2.0",
     "tsdown": "^0.14.1",
+    "tsx": "^4.20.4",
     "typescript": "^5.9.2"
   },
   "dependencies": {
     "commander": "^14.0.0",
     "express": "^5.1.0",
     "hono": "^4.9.2",
+    "inquirer": "^12.9.3",
     "js13k-vite-plugins": "^0.4.0",
     "partykit": "^0.0.115",
+    "tiged": "^2.12.7",
     "vite": "^7.1.2",
     "ws": "^8.18.3"
   },

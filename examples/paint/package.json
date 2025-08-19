@@ -1,7 +1,0 @@
-{
-  "name": "hello",
-  "version": "0.0.1",
-  "devDependencies": {
-    "vanjs-core": "^1.5.5"
-  }
-}
