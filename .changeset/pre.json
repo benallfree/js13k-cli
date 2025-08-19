@@ -4,5 +4,7 @@
   "initialVersions": {
     "js13k": "0.0.1"
   },
-  "changesets": []
+  "changesets": [
+    "rich-apes-kiss"
+  ]
 }

@@ -1,6 +1,6 @@
 {
   "name": "js13k",
-  "version": "0.0.1-rc.1",
+  "version": "0.0.1-rc.2",
   "description": "A CLI for the js13kGames competition",
   "author": {
     "name": "benallfree",
