@@ -18,6 +18,12 @@ const connectionStatus = document.getElementById('connectionStatus') as HTMLSpan
 const radiusSlider = document.getElementById('radiusSlider') as HTMLInputElement
 const radiusValue = document.getElementById('radiusValue') as HTMLSpanElement
 const syncOverlay = document.getElementById('syncOverlay') as HTMLDivElement | null
+const svgInput = document.getElementById('svgInput') as HTMLTextAreaElement | null
+const svgInsertBtn = document.getElementById('svgInsertBtn') as HTMLButtonElement | null
+const openSvgModalBtn = document.getElementById('openSvgModalBtn') as HTMLButtonElement | null
+const svgModal = document.getElementById('svgModal') as HTMLDivElement | null
+const svgPreviewCanvas = document.getElementById('svgPreviewCanvas') as HTMLCanvasElement | null
+const svgCancelBtn = document.getElementById('svgCancelBtn') as HTMLButtonElement | null
 
 // Set up canvas for pixel-perfect drawing
 ctx.imageSmoothingEnabled = false
@@ -66,6 +72,96 @@ function renderCursorPreview(x: number, y: number) {
   overlayCtx.fillStyle = colorPicker.value
   overlayCtx.fill()
   overlayCtx.globalAlpha = 1
+}
+
+// --- SVG preview helpers (modal) ---
+function clearSvgPreviewModal() {
+  if (!svgPreviewCanvas) return
+  const pc = svgPreviewCanvas.getContext('2d')!
+  pc.clearRect(0, 0, svgPreviewCanvas.width, svgPreviewCanvas.height)
+}
+
+function parseSvgIntrinsicSize(svgText: string): { w: number; h: number } {
+  try {
+    const doc = new DOMParser().parseFromString(svgText, 'image/svg+xml')
+    let svgEl = doc.documentElement
+    if (svgEl && svgEl.nodeName.toLowerCase() !== 'svg') svgEl = (doc.querySelector('svg') as any) || svgEl
+    const viewBox = svgEl.getAttribute('viewBox')
+    if (viewBox) {
+      const parts = viewBox
+        .trim()
+        .split(/[\s,]+/)
+        .map((n) => Number(n))
+      if (parts.length === 4 && parts[2] > 0 && parts[3] > 0) {
+        return { w: parts[2], h: parts[3] }
+      }
+    }
+    const widthAttr = svgEl.getAttribute('width') || ''
+    const heightAttr = svgEl.getAttribute('height') || ''
+    const num = (v: string) => {
+      const m = String(v).match(/([0-9]*\.?[0-9]+)/)
+      return m ? Number(m[1]) : NaN
+    }
+    const w = num(widthAttr)
+    const h = num(heightAttr)
+    if (!isNaN(w) && !isNaN(h) && w > 0 && h > 0) return { w, h }
+  } catch {}
+  return { w: 100, h: 100 }
+}
+
+function computeAspectFit(
+  srcW: number,
+  srcH: number,
+  dstW: number,
+  dstH: number
+): { x: number; y: number; w: number; h: number } {
+  const scale = Math.min(dstW / srcW, dstH / srcH)
+  const w = Math.floor(srcW * scale)
+  const h = Math.floor(srcH * scale)
+  const x = Math.floor((dstW - w) / 2)
+  const y = Math.floor((dstH - h) / 2)
+  return { x, y, w, h }
+}
+
+function drawSvgStringToContext(
+  svgText: string,
+  targetCtx: CanvasRenderingContext2D,
+  fit: { x: number; y: number; w: number; h: number }
+) {
+  return new Promise<void>((resolve) => {
+    const blob = new Blob([svgText], { type: 'image/svg+xml' })
+    const url = URL.createObjectURL(blob)
+    const img = new Image()
+    img.onload = () => {
+      try {
+        targetCtx.drawImage(img, fit.x, fit.y, fit.w, fit.h)
+      } finally {
+        URL.revokeObjectURL(url)
+        resolve()
+      }
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      resolve()
+    }
+    img.src = url
+  })
+}
+
+async function renderSvgPreview(svgText: string) {
+  if (!svgPreviewCanvas) return
+  clearSvgPreviewModal()
+  const size = parseSvgIntrinsicSize(svgText)
+  const pc = svgPreviewCanvas.getContext('2d')!
+  const fit = computeAspectFit(size.w, size.h, svgPreviewCanvas.width, svgPreviewCanvas.height)
+  await drawSvgStringToContext(svgText, pc, fit)
+}
+
+async function insertSvgIntoCanvas(svgText: string) {
+  const size = parseSvgIntrinsicSize(svgText)
+  const fit = computeAspectFit(size.w, size.h, canvas.width, canvas.height)
+  await drawSvgStringToContext(svgText, ctx, fit)
+  scheduleSave()
 }
 
 // --- Sync state ---
@@ -279,6 +375,21 @@ function handleMessage(message: string) {
       // Presence message – not used right now
       return
     }
+
+    if (type === 'V') {
+      if (isSyncing) {
+        queuedDeltas.push(message)
+        return
+      }
+      // rest is base64-encoded SVG string
+      try {
+        const svgText = decodeURIComponent(escape(atob(rest)))
+        const size = parseSvgIntrinsicSize(svgText)
+        const fit = computeAspectFit(size.w, size.h, canvas.width, canvas.height)
+        drawSvgStringToContext(svgText, ctx, fit).then(() => scheduleSave())
+      } catch {}
+      return
+    }
   }
 
   // Back-compat: legacy paint messages without prefix
@@ -319,6 +430,44 @@ canvas.addEventListener('mouseleave', () => {
   isDrawing = false
   lastMousePos = null
   clearCursorPreview()
+})
+
+// SVG Modal wiring
+openSvgModalBtn?.addEventListener('click', () => {
+  if (!svgModal) return
+  svgModal.style.display = 'flex'
+  clearSvgPreviewModal()
+  // Auto-preview current textarea contents if any
+  const text = svgInput?.value?.trim() || ''
+  if (text) renderSvgPreview(text)
+})
+
+svgInsertBtn?.addEventListener('click', () => {
+  const text = (svgInput?.value || '').trim()
+  if (!text) return
+  insertSvgIntoCanvas(text).then(() => {
+    clearSvgPreviewModal()
+    if (svgModal) svgModal.style.display = 'none'
+    // Broadcast as V|<base64(svg)>
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      try {
+        const b64 = btoa(unescape(encodeURIComponent(text)))
+        ws.send(`V|${b64}`)
+      } catch {}
+    }
+  })
+})
+
+svgCancelBtn?.addEventListener('click', () => {
+  clearSvgPreviewModal()
+  if (svgModal) svgModal.style.display = 'none'
+})
+
+// Auto preview on input
+svgInput?.addEventListener('input', () => {
+  const text = svgInput.value.trim()
+  if (!text) return clearSvgPreviewModal()
+  renderSvgPreview(text)
 })
 
 // WebSocket connection
